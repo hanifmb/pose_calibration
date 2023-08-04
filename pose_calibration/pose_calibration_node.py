@@ -1,16 +1,12 @@
 import rclpy
 import pandas as pd
 import sensor_msgs_py.point_cloud2 as pc
+import itertools
+import numpy as np 
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 from plyfile import PlyData, PlyElement
-import itertools
 from scipy.spatial.transform import Rotation
-
-import ctypes
-import struct
-import time
-import numpy as np 
 
 class MyNode(Node):
     def __init__(self):
@@ -22,28 +18,18 @@ class MyNode(Node):
         cloud = pc.read_points_list(msg, skip_nans=True)
 
         # apparently faster than converting cloud to np.array directly
-        start_time = time.time()
-
         SIZE = len(cloud)
-        # x = [None] * SIZE
-        # y = [None] * SIZE
-        # z = [None] * SIZE
         x = []
         y = []
         z = []
         for idx in range(SIZE):
             if cloud[idx][2] <= 1.5:
-                # x[idx] = cloud[idx][0]
-                # y[idx] = cloud[idx][1]
-                # z[idx] = cloud[idx][2]
                 x.append(cloud[idx][0])
                 y.append(cloud[idx][1])
                 z.append(cloud[idx][2])
         self.cloud_np = np.column_stack((x, y, z))
         self.estimate_pose()
 
-        print("--- %s seconds ---" % (time.time() - start_time))
-        # print(self.cloud_np)
         exit()
 
     def gram_schmidt(self, vectors):
@@ -62,7 +48,6 @@ class MyNode(Node):
 
     def estimate_pose(self):
         
-
         planes, inliers = self.seq_ransac(self.cloud_np, n_iters=400, threshold=0.005, n_planes=3)
 
         planes_intersect_vec = []
@@ -75,6 +60,7 @@ class MyNode(Node):
 
             z = dir_vec_normal[2]
 
+            # make sure the three vectors are facing the camera
             if z > 0:
                 dir_vec_normal = dir_vec_normal * -1
                 
@@ -99,25 +85,6 @@ class MyNode(Node):
         print("origin ", origin)
         print("quaternion ", quaternion)
 
-
-        # length = len(self.cloud_np)
-        # rgb = np.full((length, 3), (255, 255, 255)) # weirdly enough 3 x length wasn't able to be broadcasted, investigate!
-
-        # rgb[inliers[0]] = (255, 0, 0)
-        # rgb[inliers[1]] = (0, 255, 0)
-        # rgb[inliers[2]] = (0, 0, 255)
-
-        # rgb_np = np.array(rgb)
-
-        # ver = np.hstack((self.cloud_np, rgb_np))
-        # new_ver = np.core.records.fromarrays(ver.transpose(), 
-        #                                  names='x, y, z, red, green, blue',
-        #                                  formats = 'f4, f4, f4, u1, u1, u1')
-
-        # el = PlyElement.describe(new_ver, 'vertex')
-        # # PlyData([el], text=True).write('some_ascii.ply')
-        # PlyData([el], text=True).write('/home/batman/ws/some.ply')
-
     def seq_ransac(self, points, n_iters=1000, threshold=0.005, n_planes=3):
         n_points = len(points)
 
@@ -130,7 +97,8 @@ class MyNode(Node):
 
             p = 0.99
             s = 3
-            eps = (len(remaining_points) - 45000) / len(remaining_points)
+            num_inliers = 45000
+            eps = (len(remaining_points) - num_inliers) / len(remaining_points)
             N = round(np.log(1-p) / np.log(1-(1-eps)**s))
             print(N)
 
