@@ -148,7 +148,7 @@ def export_planes(points, planes):
                                        names='x, y, z, red, green, blue',
                                        formats = 'f4, f4, f4, u1, u1, u1')
   el = PlyElement.describe(new_ver, 'vertex')
-  PlyData([el], text=True).write('/home/batman/ascii.ply')
+  PlyData([el], text=True).write('./ascii.ply')
 
 class MyNode(Node):
   def __init__(self):
@@ -206,8 +206,6 @@ class MyNode(Node):
 
     #find three planes intersection
     origin = np.linalg.solve(np.array([planes[i].normal for i in range(3)]), -1*np.array([planes[i].d for i in range(3)]))
-
-    print("tf_cw: ", rf_cw)
 
     # publish tf for visualization
     transform_msg = TransformStamped()
