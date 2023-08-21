@@ -1,12 +1,11 @@
 import rclpy
 import pandas as pd
 import sensor_msgs_py.point_cloud2 as pc
-import itertools
+# import itertools
 import numpy as np 
 import struct
 import ctypes
 import cv2
-import time
 import random
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
@@ -124,8 +123,6 @@ def gram_schmidt(vectors):
   return orthogonalized_vectors
 
 def vec_from_planes_intersection(plane1, plane2):
-  # normal1 = plane1.normal
-  # normal2 = plane2.normal
 
   dir_vec = np.cross(plane1.normal, plane2.normal)
   dir_vec_normal = dir_vec / np.linalg.norm(dir_vec)
@@ -158,20 +155,17 @@ class MyNode(Node):
   def __init__(self):
     super().__init__('my_node')
     self.pc_sub = self.create_subscription(PointCloud2, '/camera/depth/color/points', self.pc_cb, 10)
-    self.publisher_ = self.create_publisher(TFMessage, '/tf', 10)  # Change topic and message type
+    self.publisher_ = self.create_publisher(TFMessage, '/tf', 10)  
 
   def pc_cb(self, msg):
-    '''
-    Called everytime new point cloud is received
-    '''
     points = pc.read_points_list(msg, skip_nans=True)
     cloud = Cloud(points)
 
     planes = seq_RANSAC(cloud) # run sequential ransac
-    # random.shuffle(planes)
     # export_planes(cloud.points, planes) 
 
     # identify the plane
+    # need refactor
     color_indices = []
     for i in range(3):
       rgb_array = cloud.rgb[planes[i].inlier_indices]
@@ -199,19 +193,12 @@ class MyNode(Node):
     z_vec = vec_from_planes_intersection(green_plane, blue_plane)
     planes_intersect_vec = np.vstack((x_vec, y_vec, z_vec))
 
-    # find intersection vector between planes 
-    # planes_intersect_vec = []
-    # for x in itertools.combinations(planes, 2):
-    #   dir_vec_normal = vec_from_planes_intersection(x[0], x[1])
-    #   planes_intersect_vec.append(dir_vec_normal)
-
     orthogonalized_vec = gram_schmidt(np.asarray(planes_intersect_vec)) # orthogonalize vectors
     rotation_mat = np.transpose(orthogonalized_vec)
+    quaternion = Rotation.from_matrix(rotation_mat).as_quat()
 
-    # find the intersection of three planes 
+    #find three planes intersection
     origin = np.linalg.solve(np.array([planes[i].normal for i in range(3)]), -1*np.array([planes[i].d for i in range(3)]))
-    rotation = Rotation.from_matrix(rotation_mat)
-    quaternion = rotation.as_quat()
 
     # publish tf for visualization
     transform_msg = TransformStamped()
@@ -238,61 +225,6 @@ class MyNode(Node):
     print("quaternion ", quaternion)
 
     exit() # run once
-
-def estimate_pose(self):
-  planes, inliers = self.seq_ransac(self.cloud_np, n_iters=400, threshold=0.005, n_planes=3)
-
-  color_indices = []
-  for i in range(3):
-
-    rgb_array = self.rgb[inliers[i]]
-    rgb_array = rgb_array.astype(np.uint8)
-    hsv_color = cv2.cvtColor(rgb_array.reshape(-1, 1, 3), cv2.COLOR_RGB2HSV)
-    hsv_squeezed = np.squeeze(hsv_color, axis=1)
-
-    red_mask = np.logical_or(hsv_squeezed[:, 0] > 150, hsv_squeezed[:, 0] < 30)
-    green_mask = np.logical_and(hsv_squeezed[:, 0] > 45, hsv_squeezed[:, 0] < 90)
-    blue_mask = np.logical_and(hsv_squeezed[:, 0] > 90, hsv_squeezed[:, 0] < 120)
-
-    red_pcs = hsv_squeezed[red_mask]
-    green_pcs = hsv_squeezed[green_mask]
-    blue_pcs = hsv_squeezed[blue_mask]
-
-    color_idx = np.argmax([len(red_pcs), len(green_pcs), len(blue_pcs)])
-    color_indices.append(color_idx)
-
-  red_plane = planes[np.where(np.array(color_indices)==0)[0][0]]
-  green_plane = planes[np.where(np.array(color_indices)==1)[0][0]]
-  blue_plane = planes[np.where(np.array(color_indices)==2)[0][0]]
-
-  x_vec = self.vec_from_planes_intersection(red_plane, green_plane)
-  y_vec = self.vec_from_planes_intersection(blue_plane, red_plane)
-  z_vec = self.vec_from_planes_intersection(green_plane, blue_plane)
-
-  planes_intersect_vec = np.vstack((x_vec, y_vec, z_vec))
-
-  print("planes_intersect_vec: ", planes_intersect_vec)
-
-  # calculating rotation matrix 
-  # planes_intersect_vec = np.array(planes_intersect_vec)
-  orthogonalized_vec = self.gram_schmidt(planes_intersect_vec)
-  rotation_mat = np.transpose(orthogonalized_vec)
-
-  print("orthogonalized_vec", orthogonalized_vec)
-
-  # intersection of three planes yields a point
-  planes = np.array(planes)
-  origin = np.linalg.solve(planes[:, 0:3], -1*planes[:, 3])
-
-  # convert to quaternion
-  rotation = Rotation.from_matrix(rotation_mat)
-  quaternion = rotation.as_quat()
-
-  print("vectors ", planes_intersect_vec)
-  print("orthogonalized ", orthogonalized_vec)
-  print("rotation mat ", rotation_mat)
-  print("origin ", origin)
-  print("quaternion ", quaternion)
 
 def main(args=None):
   rclpy.init(args=args)
