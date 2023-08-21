@@ -149,7 +149,7 @@ def export_planes(points, planes):
                                        names='x, y, z, red, green, blue',
                                        formats = 'f4, f4, f4, u1, u1, u1')
   el = PlyElement.describe(new_ver, 'vertex')
-  PlyData([el], text=True).write('ascii.ply')
+  PlyData([el], text=True).write('./ascii.ply')
 
 class MyNode(Node):
   def __init__(self):
@@ -162,7 +162,7 @@ class MyNode(Node):
     cloud = Cloud(points)
 
     planes = seq_RANSAC(cloud) # run sequential ransac
-    # export_planes(cloud.points, planes) 
+    export_planes(cloud.points, planes) 
 
     # identify the plane
     # need refactor
@@ -173,17 +173,20 @@ class MyNode(Node):
       hsv_color = cv2.cvtColor(rgb_array.reshape(-1, 1, 3), cv2.COLOR_RGB2HSV)
       hsv_squeezed = np.squeeze(hsv_color, axis=1)
 
-      red_mask = np.logical_or(hsv_squeezed[:, 0] > 150, hsv_squeezed[:, 0] < 30)
-      green_mask = np.logical_and(hsv_squeezed[:, 0] > 45, hsv_squeezed[:, 0] < 90)
-      blue_mask = np.logical_and(hsv_squeezed[:, 0] > 90, hsv_squeezed[:, 0] < 120)
+      red_mask = np.logical_or(hsv_squeezed[:, 0] > 170, hsv_squeezed[:, 0] < 10)
+      green_mask = np.logical_and(hsv_squeezed[:, 0] > 45, hsv_squeezed[:, 0] < 75)
+      blue_mask = np.logical_and(hsv_squeezed[:, 0] > 90, hsv_squeezed[:, 0] < 110)
 
       red_pcs = hsv_squeezed[red_mask]
       green_pcs = hsv_squeezed[green_mask]
       blue_pcs = hsv_squeezed[blue_mask]
 
+      print(f"r:{len(red_pcs)} g:{len(green_pcs)} b:{len(blue_pcs)}")
+
       color_idx = np.argmax([len(red_pcs), len(green_pcs), len(blue_pcs)])
       color_indices.append(color_idx)
 
+    print(f"indices: {color_indices}")
     red_plane = planes[np.where(np.array(color_indices)==0)[0][0]]
     green_plane = planes[np.where(np.array(color_indices)==1)[0][0]]
     blue_plane = planes[np.where(np.array(color_indices)==2)[0][0]]
