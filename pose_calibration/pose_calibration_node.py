@@ -13,6 +13,7 @@ from plyfile import PlyData, PlyElement
 from scipy.spatial.transform import Rotation
 from geometry_msgs.msg import TransformStamped
 from tf2_msgs.msg import TFMessage
+from std_srvs.srv import Empty
 
 class Plane():
   def __init__(self, three_points):
@@ -39,7 +40,7 @@ class Cloud():
     SIZE = len(cloud)
     x=[]; y=[]; z=[]; r=[]; g=[]; b=[]
     for idx in range(SIZE):
-      if cloud[idx][2] <= 1.5:
+      if cloud[idx][2] <= 1.0:
         x.append(cloud[idx][0])
         y.append(cloud[idx][1])
         z.append(cloud[idx][2])
@@ -62,7 +63,7 @@ class Cloud():
     rgb = np.column_stack((r, g, b))
     return points, rgb
 
-def seq_RANSAC(cloud, threshold=0.005, n_planes=3):
+def seq_ransac(cloud, threshold=0.005, n_planes=3):
   def ransac_plane_fit(points, n_iters):
     best_plane = []
     best_inliers = []
@@ -122,16 +123,14 @@ def gram_schmidt(vectors):
 
   return orthogonalized_vectors
 
-def vec_from_planes_intersection(plane1, plane2):
-
+def calc_vec(plane1, plane2):
   dir_vec = np.cross(plane1.normal, plane2.normal)
   dir_vec_normal = dir_vec / np.linalg.norm(dir_vec)
 
   z = dir_vec_normal[2]
 
   # make sure the three vectors are facing the camera
-  if z > 0:
-    dir_vec_normal = dir_vec_normal * -1
+  if z > 0: dir_vec_normal = dir_vec_normal * -1
 
   return dir_vec_normal
 
@@ -149,29 +148,34 @@ def export_planes(points, planes):
                                        names='x, y, z, red, green, blue',
                                        formats = 'f4, f4, f4, u1, u1, u1')
   el = PlyElement.describe(new_ver, 'vertex')
-  PlyData([el], text=True).write('./ascii.ply')
+  PlyData([el], text=True).write('/home/batman/ascii.ply')
 
 class MyNode(Node):
   def __init__(self):
     super().__init__('my_node')
     self.pc_sub = self.create_subscription(PointCloud2, '/camera/depth/color/points', self.pc_cb, 10)
-    self.publisher_ = self.create_publisher(TFMessage, '/tf', 10)  
+    self.calib_srv = self.create_service(Empty, '/pose_calibration/get_pose', self.calib_cb)
+    self.tf_pub = self.create_publisher(TFMessage, '/tf', 10)  
+    self.points = []
 
   def pc_cb(self, msg):
-    points = pc.read_points_list(msg, skip_nans=True)
-    cloud = Cloud(points)
+    self.points = pc.read_points_list(msg, skip_nans=True)
 
-    planes = seq_RANSAC(cloud) # run sequential ransac
-    export_planes(cloud.points, planes) 
+  def calib_cb(self, request, response):
+
+    if self.points == []: print("Point cloud is empty!"); return response
+    cloud = Cloud(self.points)
+    planes = seq_ransac(cloud) # run sequential ransac
+    # export_planes(cloud.points, planes) 
 
     # identify the plane
     # need refactor
     color_indices = []
     for i in range(3):
-      rgb_array = cloud.rgb[planes[i].inlier_indices]
-      rgb_array = rgb_array.astype(np.uint8)
-      hsv_color = cv2.cvtColor(rgb_array.reshape(-1, 1, 3), cv2.COLOR_RGB2HSV)
-      hsv_squeezed = np.squeeze(hsv_color, axis=1)
+      rgb = cloud.rgb[planes[i].inlier_indices]
+      rgb = rgb.astype(np.uint8)
+      hsv = cv2.cvtColor(rgb.reshape(-1, 1, 3), cv2.COLOR_RGB2HSV)
+      hsv_squeezed = np.squeeze(hsv, axis=1)
 
       red_mask = np.logical_or(hsv_squeezed[:, 0] > 170, hsv_squeezed[:, 0] < 10)
       green_mask = np.logical_and(hsv_squeezed[:, 0] > 45, hsv_squeezed[:, 0] < 75)
@@ -191,9 +195,9 @@ class MyNode(Node):
     green_plane = planes[np.where(np.array(color_indices)==1)[0][0]]
     blue_plane = planes[np.where(np.array(color_indices)==2)[0][0]]
 
-    x_vec = vec_from_planes_intersection(red_plane, blue_plane)
-    y_vec = vec_from_planes_intersection(green_plane, red_plane)
-    z_vec = vec_from_planes_intersection(green_plane, blue_plane)
+    x_vec = calc_vec(red_plane, blue_plane)
+    y_vec = calc_vec(green_plane, red_plane)
+    z_vec = calc_vec(green_plane, blue_plane)
     planes_intersect_vec = np.vstack((x_vec, y_vec, z_vec))
 
     orthogonalized_vec = gram_schmidt(np.asarray(planes_intersect_vec)) # orthogonalize vectors
@@ -202,6 +206,8 @@ class MyNode(Node):
 
     #find three planes intersection
     origin = np.linalg.solve(np.array([planes[i].normal for i in range(3)]), -1*np.array([planes[i].d for i in range(3)]))
+
+    print("tf_cw: ", rf_cw)
 
     # publish tf for visualization
     transform_msg = TransformStamped()
@@ -218,7 +224,7 @@ class MyNode(Node):
 
     tf_msg = TFMessage()
     tf_msg.transforms = [transform_msg]
-    self.publisher_.publish(tf_msg)
+    self.tf_pub.publish(tf_msg)
 
     # print for debugging 
     print("vectors ", planes_intersect_vec)
@@ -226,8 +232,7 @@ class MyNode(Node):
     print("rotation mat ", rotation_mat)
     print("origin ", origin)
     print("quaternion ", quaternion)
-
-    exit() # run once
+    return response
 
 def main(args=None):
   rclpy.init(args=args)
