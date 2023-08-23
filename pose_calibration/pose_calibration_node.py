@@ -1,5 +1,5 @@
 import rclpy
-import pandas as pd
+# import pandas as pd
 import sensor_msgs_py.point_cloud2 as pc
 # import itertools
 import numpy as np 
@@ -12,8 +12,9 @@ from sensor_msgs.msg import PointCloud2
 from plyfile import PlyData, PlyElement
 from scipy.spatial.transform import Rotation
 from geometry_msgs.msg import TransformStamped
-from tf2_msgs.msg import TFMessage
+# from tf2_msgs.msg import TFMessage
 from std_srvs.srv import Empty
+from tf2_ros import TransformBroadcaster
 
 class Plane():
   def __init__(self, three_points):
@@ -68,21 +69,49 @@ class MyNode(Node):
     super().__init__('my_node')
     self.pc_sub = self.create_subscription(PointCloud2, '/camera/depth/color/points', self.pc_cb, 10)
     self.calib_srv = self.create_service(Empty, '/pose_calibration/get_pose', self.calib_cb)
-    self.tf_pub = self.create_publisher(TFMessage, '/tf', 10)  
+    # self.tf_pub = self.create_publisher(TFMessage, '/tf', 10)  
+    self.tf_broadcaster = TransformBroadcaster(self)
     self.timer = self.create_timer(0.1, self.publish_transform)
     self.points = []
-    self.tf_msg = None
+    # transformation mat
+    self.t_cw = None
+    self.t_cr = None
+    self.t_ct = None
 
   def publish_transform(self):
-    if self.tf_msg is None: return
-    self.tf_pub.publish(self.tf_msg)
+    if self.t_cw is None: return
+
+    def create_transform(node, t, parent, child):
+      r = t[:3, :3]
+      quaternion = Rotation.from_matrix(r).as_quat()
+      translation = t[:3, 3]
+      transform_msg = TransformStamped()
+      transform_msg.header.stamp = node.get_clock().now().to_msg()
+      transform_msg.header.frame_id = parent
+      transform_msg.child_frame_id = child
+      transform_msg.transform.translation.x = translation[0]
+      transform_msg.transform.translation.y = translation[1]
+      transform_msg.transform.translation.z = translation[2]
+      transform_msg.transform.rotation.x = quaternion[0]
+      transform_msg.transform.rotation.y = quaternion[1]
+      transform_msg.transform.rotation.z = quaternion[2]
+      transform_msg.transform.rotation.w = quaternion[3]
+      return transform_msg
+
+    tcw_msg = create_transform(self, self.t_cw, 'camera_depth_optical_frame', 'calibration_box')
+    tcr_msg = create_transform(self, self.t_cr, 'camera_depth_optical_frame', 'robot_base')
+    tct_msg = create_transform(self, self.t_ct, 'camera_depth_optical_frame', 'tool')
+
+    self.tf_broadcaster.sendTransform(tcw_msg)
+    self.tf_broadcaster.sendTransform(tcr_msg)
+    # self.tf_broadcaster.sendTransform(tct_msg)
 
   def pc_cb(self, msg):
     self.points = pc.read_points_list(msg, skip_nans=True)
 
   def calib_cb(self, request, response):
-
     if self.points == []: print("Point cloud is empty!"); return response
+    print("Request received...")
     cloud = Cloud(self.points)
     planes = seq_ransac(cloud) # run sequential ransac
     # export_planes(cloud.points, planes) 
@@ -128,9 +157,9 @@ class MyNode(Node):
 
     # find t_ct
     # transformation of world w.r.t camera
-    t_cw = np.eye(4)
-    t_cw [:3, :3] = rotation_mat 
-    t_cw [:3, 3] = origin 
+    self.t_cw = np.eye(4)
+    self.t_cw [:3, :3] = rotation_mat 
+    self.t_cw [:3, 3] = origin 
 
     # transformation of robot's base w.r.t world
     t_rw = np.array([[-1.0000000,  0.0000000,  0.0000000, 0.314],
@@ -144,20 +173,10 @@ class MyNode(Node):
                      [0.5511497,  0.6755850, -0.4897130, 0.560472],
                      [0.7565089, -0.1569719,  0.6348653, 0.680237],
                      [0.0000000, 0.0000000, 0.0000000, 1.0000000]])
-
-    t_cr = t_cw @ t_wr
-    t_ct = t_cr @ t_rt
+    
+    self.t_cr = self.t_cw @ t_wr
+    self.t_ct = self.t_cr @ t_rt
     # print(f"t_cw: {t_cw}\n t_rw: {t_wr}\n t_rt: {t_rt}\n")
-    print("t_ct: ", t_wr)
-
-    tcw_msg = create_transform(self, t_cw, 'camera_depth_optical_frame', 'calibration_box')
-    tcr_msg = create_transform(self, t_cr, 'camera_depth_optical_frame', 'robot_base')
-    tct_msg = create_transform(self, t_ct, 'camera_depth_optical_frame', 'tool')
-
-    self.tf_msg = TFMessage()
-    # tf_msg.transforms = [tcw_msg, tcr_msg, tct_msg]
-    self.tf_msg.transforms = [tcw_msg]
-    # self.tf_pub.publish(tf_msg)
 
     # print for debugging 
     print("vectors ", planes_intersect_vec)
@@ -167,24 +186,6 @@ class MyNode(Node):
     print("quaternion ", quaternion)
     return response
 
-def create_transform(node, t, parent, child):
-
-  r = t[:3, :3]
-  quaternion = Rotation.from_matrix(r).as_quat()
-  translation = t[:3, 3]
-  transform_msg = TransformStamped()
-  transform_msg.header.stamp = node.get_clock().now().to_msg()
-  transform_msg.header.frame_id = parent
-  transform_msg.child_frame_id = child
-  transform_msg.transform.translation.x = translation[0]
-  transform_msg.transform.translation.y = translation[1]
-  transform_msg.transform.translation.z = translation[2]
-  transform_msg.transform.rotation.x = quaternion[0]
-  transform_msg.transform.rotation.y = quaternion[1]
-  transform_msg.transform.rotation.z = quaternion[2]
-  transform_msg.transform.rotation.w = quaternion[3]
-
-  return transform_msg
 
 def seq_ransac(cloud, threshold=0.005, n_planes=3):
   def ransac_plane_fit(points, n_iters):
